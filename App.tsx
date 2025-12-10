@@ -11,14 +11,14 @@ const App: React.FC = () => {
   const [report, setReport] = useState<AnalysisReport | null>(null);
   const [loadingMsg, setLoadingMsg] = useState<string>('');
 
-  const handleFilesProcessed = async (files: FileContent[], projectName: string) => {
+  const handleFilesProcessed = async (files: FileContent[], projectName: string, instructions: string) => {
     setState(AppState.ANALYZING);
     setLoadingMsg(`Analyzing ${files.length} files from ${projectName}...`);
     
     try {
       // Small delay to allow UI to update
       await new Promise(resolve => setTimeout(resolve, 500));
-      const result = await analyzeCodebase(files, projectName);
+      const result = await analyzeCodebase(files, projectName, instructions);
       setReport(result);
       setState(AppState.COMPLETE);
     } catch (error) {
