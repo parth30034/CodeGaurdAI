@@ -1,66 +1,43 @@
 
 import { GoogleGenAI, Type, Schema } from "@google/genai";
-import { FileContent, AnalysisReport } from '../types';
+import { FileContent, AnalysisReport, ModuleType } from '../types';
 import { MAX_TOTAL_CONTEXT_CHARS } from '../constants';
-import { analyzeProject, composeSystemInstruction, ProjectProfile } from './promptLibrary';
+import { getModulePrompt } from './promptLibrary';
 
 /**
- * Enhanced CodeGuard AI Analysis with Runtime Module Detection
- * Automatically detects project complexity and applies specialized prompts
+ * Multi-Module CodeGuard AI Analysis
  */
-export const analyzeCodebase = async (files: FileContent[], projectName: string, instructions?: string): Promise<AnalysisReport> => {
+export const analyzeCodebase = async (
+  files: FileContent[], 
+  projectName: string, 
+  module: ModuleType,
+  instructions: string
+): Promise<AnalysisReport> => {
   if (!process.env.API_KEY) {
     throw new Error("API Key is missing.");
   }
 
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-  // ===================================================================
-  // PHASE 1: Project Analysis & Module Detection
-  // ===================================================================
-  console.log('🔍 Analyzing project structure...');
-  const projectProfile: ProjectProfile = analyzeProject(files);
-  
-  console.log('📊 Project Profile:', {
-    complexity: projectProfile.complexity,
-    totalFiles: projectProfile.totalFiles,
-    primaryLanguage: projectProfile.primaryLanguage,
-    architecture: projectProfile.architecture,
-    detectedModules: projectProfile.detectedModules.map(m => m.name),
-    analysisDepth: projectProfile.estimatedAnalysisDepth
-  });
-
-  // ===================================================================
-  // PHASE 2: Dynamic Prompt Composition
-  // ===================================================================
-  const systemInstruction = composeSystemInstruction(projectProfile);
-  
-  // ===================================================================
-  // PHASE 3: Context Preparation with Smart Truncation
-  // ===================================================================
+  // 1. Prepare Context (Files)
   let totalChars = 0;
   const contextParts: string[] = [];
   
-  contextParts.push(`# PROJECT ANALYSIS REQUEST\n`);
+  contextParts.push(`# ANALYSIS CONTEXT\n`);
   contextParts.push(`Project: ${projectName}\n`);
-  contextParts.push(`Complexity: ${projectProfile.complexity}\n`);
-  contextParts.push(`Architecture: ${projectProfile.architecture}\n`);
-  contextParts.push(`Primary Language: ${projectProfile.primaryLanguage}\n`);
-  contextParts.push(`Total Files: ${projectProfile.totalFiles}\n\n`);
-  contextParts.push(`Detected Analysis Modules:\n`);
-  projectProfile.detectedModules.forEach(m => {
-    contextParts.push(`- ${m.name} (Priority: ${m.priority})\n`);
-  });
-  contextParts.push(`\n# CODEBASE FILES\n\n`);
+  contextParts.push(`Target Module: ${module.toUpperCase()}\n`);
+  contextParts.push(`Total Files: ${files.length}\n\n`);
+  contextParts.push(`## SOURCE CODE\n`);
 
-  // Prioritize files for analysis based on project type
-  const prioritizedFiles = prioritizeFiles(files, projectProfile);
+  // Simple heuristic: prioritize larger files for architecture, specific patterns for others
+  // For now, we take the top files that fit in context
+  const sortedFiles = files.sort((a, b) => b.size - a.size); // Largest first usually contains core logic
 
-  for (const file of prioritizedFiles) {
-    const fileHeader = `\n--- FILE: ${file.path} (${file.size} bytes) ---\n`;
+  for (const file of sortedFiles) {
+    const fileHeader = `\n--- FILE: ${file.path} ---\n`;
     
     if (totalChars + fileHeader.length + file.content.length > MAX_TOTAL_CONTEXT_CHARS) {
-      contextParts.push(`\n[...Context limit reached. ${files.length - prioritizedFiles.indexOf(file)} files omitted...]\n`);
+      contextParts.push(`\n[...Context limit reached. Remaining files omitted...]\n`);
       break;
     }
     
@@ -69,240 +46,172 @@ export const analyzeCodebase = async (files: FileContent[], projectName: string,
     totalChars += fileHeader.length + file.content.length;
   }
 
-  // ===================================================================
-  // PHASE 4: Build Analysis Prompt
-  // ===================================================================
-  const prompt = buildAnalysisPrompt(projectProfile, instructions);
+  // 2. Get Dynamic Prompt
+  const systemInstruction = getModulePrompt(module, instructions);
 
-  // ===================================================================
-  // PHASE 5: Enhanced JSON Schema with Quantifiable Metrics
-  // ===================================================================
-  const schema: Schema = buildEnhancedSchema(projectProfile);
+  // 3. Get Dynamic Schema
+  const schema = getModuleSchema(module);
 
-  // ===================================================================
-  // PHASE 6: Execute Analysis with Gemini (with Quality Validation)
-  // ===================================================================
-  console.log('🤖 Sending to Gemini 2.5 Flash for analysis...');
+  // 4. Call API
+  console.log(`🤖 Sending to Gemini (${module})...`);
   
-  const maxRetries = 2;
-  let lastError: Error | null = null;
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      // Add quality requirements to prompt on retry
-      const finalPrompt = attempt > 1 
-        ? enhancePromptForQuality(prompt, attempt)
-        : prompt;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [
-          { text: contextParts.join('') },
-          { text: finalPrompt }
-        ],
-        config: {
-          systemInstruction,
-          responseMimeType: "application/json",
-          responseSchema: schema,
-          temperature: attempt > 1 ? 0.1 : 0.2, // Lower temp on retry for precision
-        }
-      });
-
-      const jsonText = response.text;
-      if (!jsonText) throw new Error("Empty response from AI");
-
-      const result = JSON.parse(jsonText);
-      
-      const rawReport: AnalysisReport = {
-        projectName,
-        totalFilesScanned: files.length,
-        timestamp: new Date().toISOString(),
-        ...result
-      };
-
-      // Basic validation for categorization
-      if (rawReport.highRiskHotspots.length > 0 && !rawReport.highRiskHotspots[0].category) {
-        // Fallback if AI forgot category despite schema
-        rawReport.highRiskHotspots.forEach(h => h.category = 'General');
-        rawReport.bottlenecks.forEach(b => b.category = 'General');
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: [
+        { text: contextParts.join('') }
+      ],
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: schema,
+        temperature: 0.2,
       }
+    });
 
-      return rawReport;
-      
-    } catch (error) {
-      console.error(`❌ Analysis attempt ${attempt} failed:`, error);
-      lastError = error as Error;
-      
-      if (attempt < maxRetries) {
-        console.log(`🔄 Retrying (attempt ${attempt + 1}/${maxRetries})...`);
-        await new Promise(resolve => setTimeout(resolve, 1000)); // 1s delay
-      }
-    }
+    const jsonText = response.text;
+    if (!jsonText) throw new Error("Empty response from AI");
+
+    const result = JSON.parse(jsonText);
+    
+    // Construct final report
+    const report: AnalysisReport = {
+      projectName,
+      totalFilesScanned: files.length,
+      timestamp: new Date().toISOString(),
+      module,
+      ...result
+    };
+
+    return report;
+
+  } catch (error) {
+    console.error("Analysis failed:", error);
+    throw error;
   }
-  
-  // All retries failed
-  console.error("❌ Gemini Analysis Failed after all retries");
-  throw lastError || new Error("Analysis failed");
 };
 
 /**
- * Enhance prompt with quality requirements on retry
+ * Returns the strictly typed JSON schema for the selected module
  */
-function enhancePromptForQuality(originalPrompt: string, attempt: number): string {
-  const qualityReminders = `
+function getModuleSchema(module: ModuleType): Schema {
+  const baseString = { type: Type.STRING };
+  const baseNum = { type: Type.NUMBER };
+  const baseArrStr = { type: Type.ARRAY, items: baseString };
 
-## ⚠️  QUALITY REQUIREMENTS (Retry Attempt ${attempt})
-
-**CRITICAL - Your previous response had quality issues. Follow these STRICTLY:**
-
-1. **CATEGORIZATION IS MANDATORY:**
-   - You MUST categorize every finding as "Frontend", "Backend", "Mixed", or "Infrastructure".
-   - Do not use "General" unless absolutely necessary.
-
-2. **QUANTIFICATION IS MANDATORY:**
-   - Every hotspot impact MUST include numbers: "2.5s", "$2,040/year", "47 re-renders", "55x faster"
-   - Every bottleneck reason MUST include complexity: "O(n²)", "1+N queries", "500ms per request"
-
-3. **SPECIFICITY IS REQUIRED:**
-   - Locations MUST be exact: "routes/users.ts:45"
-   - Pattern names MUST be technical: "N+1 Query Problem"
-
-**Now retry the analysis with these quality standards.**
-`;
-
-  return originalPrompt + qualityReminders;
-}
-
-/**
- * Prioritize files for analysis based on project type
- */
-function prioritizeFiles(files: FileContent[], profile: ProjectProfile): FileContent[] {
-  const prioritized = [...files];
-
-  const highPriorityPatterns: RegExp[] = [];
-  
-  if (profile.detectedModules.some(m => m.id === 'backend_api')) {
-    highPriorityPatterns.push(/routes|controllers|api/i);
-  }
-  if (profile.detectedModules.some(m => m.id === 'backend_database')) {
-    highPriorityPatterns.push(/models|repositories|schema|prisma/i);
-  }
-  if (profile.detectedModules.some(m => m.id === 'backend_security')) {
-    highPriorityPatterns.push(/auth|security|middleware/i);
-  }
-  if (profile.detectedModules.some(m => m.id === 'frontend_react')) {
-    highPriorityPatterns.push(/components|pages|app\.tsx|index\.tsx/i);
-  }
-  if (profile.detectedModules.some(m => m.id === 'frontend_state')) {
-    highPriorityPatterns.push(/store|state|context|redux|zustand/i);
-  }
-
-  prioritized.sort((a, b) => {
-    const aHighPriority = highPriorityPatterns.some(p => p.test(a.path));
-    const bHighPriority = highPriorityPatterns.some(p => p.test(b.path));
-    
-    if (aHighPriority && !bHighPriority) return -1;
-    if (!aHighPriority && bHighPriority) return 1;
-    return a.size - b.size;
-  });
-
-  return prioritized;
-}
-
-/**
- * Build analysis prompt with module-specific focus areas
- */
-function buildAnalysisPrompt(profile: ProjectProfile, customInstructions?: string): string {
-  const parts: string[] = [];
-
-  parts.push(`# ANALYSIS REQUEST\n\n`);
-  
-  if (customInstructions) {
-    parts.push(`## USER-SPECIFIC INSTRUCTIONS (HIGHEST PRIORITY)\n`);
-    parts.push(`The user has provided the following context/instructions. Ensure your analysis addresses these points explicitly:\n`);
-    parts.push(`"${customInstructions}"\n\n`);
-    parts.push(`⚠️ Address these user instructions FIRST and ensure they appear in your findings.\n\n`);
-  }
-
-  parts.push(`## STANDARD CODEGUARD AI AUDIT\n`);
-  parts.push(`Perform comprehensive analysis across these ${profile.detectedModules.length} detected areas:\n`);
-  
-  profile.detectedModules.forEach((module, idx) => {
-    parts.push(`${idx + 1}. ${module.name} (Priority: ${module.priority}/10)\n`);
-  });
-
-  parts.push(`\n## ANALYSIS DEPTH: ${profile.estimatedAnalysisDepth.toUpperCase()}\n`);
-  
-  parts.push(`\n## REQUIRED OUTPUT\n`);
-  parts.push(`1. High-Risk Hotspots (security, complexity, fragility)\n`);
-  parts.push(`2. Performance Bottlenecks (with quantified impact)\n`);
-  parts.push(`3. Anti-Patterns (code quality issues)\n`);
-  parts.push(`4. Architectural Observations (system design)\n`);
-  parts.push(`5. Optimized Code Example (for most critical issue)\n`);
-  parts.push(`6. Executive Summary (2-3 sentences)\n`);
-  parts.push(`\n**IMPORTANT: Categorize each finding as "Frontend", "Backend", "Mixed", or "Infrastructure".**\n`);
-  parts.push(`\n**Return STRICT JSON only, no additional commentary.**\n`);
-
-  return parts.join('');
-}
-
-/**
- * Build enhanced JSON schema with quantifiable metrics and categorization
- */
-function buildEnhancedSchema(profile: ProjectProfile): Schema {
-  return {
-    type: Type.OBJECT,
-    properties: {
-      highRiskHotspots: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            file: { type: Type.STRING },
-            issue: { type: Type.STRING },
-            impact: { type: Type.STRING },
-            category: { 
-              type: Type.STRING, 
-              enum: ["Frontend", "Backend", "Mixed", "Infrastructure", "General"],
-              description: "The architectural layer this issue belongs to."
+  switch (module) {
+    case 'architecture':
+      return {
+        type: Type.OBJECT,
+        properties: {
+          healthScore: baseNum,
+          dimensionScores: {
+            type: Type.OBJECT,
+            properties: {
+              reliability: baseNum,
+              scalability: baseNum,
+              maintainability: baseNum,
+              security: baseNum,
+              performance: baseNum
             },
+            required: ["reliability", "scalability", "maintainability", "security", "performance"]
           },
-          required: ["file", "issue", "impact", "category"],
-        },
-      },
-      bottlenecks: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            location: { type: Type.STRING },
-            pattern: { type: Type.STRING },
-            reason: { type: Type.STRING },
-            suggestion: { type: Type.STRING },
-            category: { 
-              type: Type.STRING, 
-              enum: ["Frontend", "Backend", "Mixed", "Infrastructure", "General"],
-              description: "The architectural layer this issue belongs to."
-            },
+          topIssues: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                title: baseString,
+                severity: { type: Type.STRING, enum: ["Critical", "High", "Medium"] },
+                description: baseString
+              },
+              required: ["title", "severity", "description"]
+            }
           },
-          required: ["location", "pattern", "reason", "suggestion", "category"],
+          recommendations: baseArrStr,
+          quickWins: baseArrStr,
+          summary: baseString
         },
-      },
-      antiPatterns: {
-        type: Type.ARRAY,
-        items: { type: Type.STRING },
-      },
-      architecturalObservations: {
-        type: Type.ARRAY,
-        items: { type: Type.STRING },
-      },
-      optimizedCodeExample: {
-        type: Type.STRING,
-      },
-      summary: {
-        type: Type.STRING,
-      }
-    },
-    required: ["highRiskHotspots", "bottlenecks", "antiPatterns", "architecturalObservations", "optimizedCodeExample", "summary"],
-  };
+        required: ["healthScore", "dimensionScores", "topIssues", "recommendations", "quickWins", "summary"]
+      };
+
+    case 'impact':
+      return {
+        type: Type.OBJECT,
+        properties: {
+          targetSymbol: baseString,
+          directDependencies: baseArrStr,
+          indirectDependencies: baseArrStr,
+          blastRadius: { type: Type.STRING, enum: ["Critical", "High", "Medium", "Low"] },
+          affectedFlows: baseArrStr,
+          refactorPlan: baseArrStr,
+          requiredTests: baseArrStr,
+          summary: baseString
+        },
+        required: ["targetSymbol", "directDependencies", "indirectDependencies", "blastRadius", "affectedFlows", "refactorPlan", "requiredTests", "summary"]
+      };
+
+    case 'cost':
+      return {
+        type: Type.OBJECT,
+        properties: {
+          estimatedMonthlyWaste: baseString,
+          topSavings: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                item: baseString,
+                savings: baseString,
+                risk: { type: Type.STRING, enum: ["High", "Medium", "Low"] }
+              },
+              required: ["item", "savings", "risk"]
+            }
+          },
+          resourceTable: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                resource: baseString,
+                usage: baseString,
+                inefficiency: baseString
+              },
+              required: ["resource", "usage", "inefficiency"]
+            }
+          },
+          implementationRisk: baseString,
+          summary: baseString
+        },
+        required: ["estimatedMonthlyWaste", "topSavings", "resourceTable", "implementationRisk", "summary"]
+      };
+
+    case 'security':
+      return {
+        type: Type.OBJECT,
+        properties: {
+          vulnerabilities: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: baseString,
+                severity: { type: Type.STRING, enum: ["Critical", "High", "Medium", "Low"] },
+                file: baseString,
+                evidence: baseString,
+                remediation: baseString
+              },
+              required: ["id", "severity", "file", "evidence", "remediation"]
+            }
+          },
+          secretsFound: baseArrStr,
+          hardeningChecklist: baseArrStr,
+          summary: baseString
+        },
+        required: ["vulnerabilities", "secretsFound", "hardeningChecklist", "summary"]
+      };
+      
+    default:
+      throw new Error("Invalid module");
+  }
 }

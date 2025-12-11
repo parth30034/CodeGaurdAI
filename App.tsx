@@ -4,21 +4,21 @@ import Header from './components/Header';
 import UploadZone from './components/UploadZone';
 import AnalysisDashboard from './components/AnalysisDashboard';
 import { analyzeCodebase } from './services/geminiService';
-import { AppState, AnalysisReport, FileContent } from './types';
+import { AppState, AnalysisReport, FileContent, ModuleType } from './types';
 
 const App: React.FC = () => {
   const [state, setState] = useState<AppState>(AppState.IDLE);
   const [report, setReport] = useState<AnalysisReport | null>(null);
   const [loadingMsg, setLoadingMsg] = useState<string>('');
 
-  const handleFilesProcessed = async (files: FileContent[], projectName: string, instructions: string) => {
+  const handleFilesProcessed = async (files: FileContent[], projectName: string, module: ModuleType, instructions: string) => {
     setState(AppState.ANALYZING);
-    setLoadingMsg(`Analyzing ${files.length} files from ${projectName}...`);
+    setLoadingMsg(`Running ${module.toUpperCase()} analysis on ${files.length} files...`);
     
     try {
       // Small delay to allow UI to update
       await new Promise(resolve => setTimeout(resolve, 500));
-      const result = await analyzeCodebase(files, projectName, instructions);
+      const result = await analyzeCodebase(files, projectName, module, instructions);
       setReport(result);
       setState(AppState.COMPLETE);
     } catch (error) {
@@ -45,16 +45,16 @@ const App: React.FC = () => {
             {/* Features preview for landing state */}
             <div className="max-w-4xl mx-auto px-6 grid grid-cols-1 md:grid-cols-3 gap-6 text-center mt-8 opacity-60">
                 <div className="p-4">
-                    <h3 className="text-white font-bold mb-2">Security Scanning</h3>
-                    <p className="text-xs text-muted">Detect vulnerabilities and high-risk logic patterns instantly.</p>
+                    <h3 className="text-white font-bold mb-2">Module-Based Analysis</h3>
+                    <p className="text-xs text-muted">Select specialized lenses for Architecture, Security, Cost, or Impact.</p>
                 </div>
                 <div className="p-4">
-                    <h3 className="text-white font-bold mb-2">Performance Audit</h3>
-                    <p className="text-xs text-muted">Identify O(n^2) loops, memory leaks, and render bottlenecks.</p>
+                    <h3 className="text-white font-bold mb-2">Deep Context</h3>
+                    <p className="text-xs text-muted">AI understands the connections between files to predict breaking changes.</p>
                 </div>
                 <div className="p-4">
-                    <h3 className="text-white font-bold mb-2">Smart Refactoring</h3>
-                    <p className="text-xs text-muted">Get AI-generated optimized code snippets for immediate fixes.</p>
+                    <h3 className="text-white font-bold mb-2">Actionable Reports</h3>
+                    <p className="text-xs text-muted">Get concrete remediation plans, not just generic advice.</p>
                 </div>
             </div>
           </div>

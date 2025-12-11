@@ -1,5 +1,6 @@
 
 export type Category = 'Frontend' | 'Backend' | 'Mixed' | 'Infrastructure' | 'General';
+export type ModuleType = 'architecture' | 'impact' | 'cost' | 'security';
 
 export interface FileContent {
   path: string;
@@ -7,32 +8,77 @@ export interface FileContent {
   size: number;
 }
 
-export interface Hotspot {
-  file: string;
-  issue: string;
-  impact: string;
-  category: Category;
+// --- MODULE SPECIFIC REPORT TYPES ---
+
+export interface ArchitectureReport {
+  module: 'architecture';
+  healthScore: number;
+  dimensionScores: {
+    reliability: number;
+    scalability: number;
+    maintainability: number;
+    security: number;
+    performance: number;
+  };
+  topIssues: {
+    title: string;
+    severity: 'Critical' | 'High' | 'Medium';
+    description: string;
+  }[];
+  recommendations: string[];
+  quickWins: string[];
+  summary: string;
 }
 
-export interface Bottleneck {
-  location: string;
-  pattern: string;
-  reason: string;
-  suggestion: string;
-  category: Category;
+export interface ImpactReport {
+  module: 'impact';
+  targetSymbol: string;
+  directDependencies: string[];
+  indirectDependencies: string[];
+  blastRadius: 'Critical' | 'High' | 'Medium' | 'Low';
+  affectedFlows: string[];
+  refactorPlan: string[];
+  requiredTests: string[];
+  summary: string;
 }
 
-export interface AnalysisReport {
+export interface CostReport {
+  module: 'cost';
+  estimatedMonthlyWaste: string;
+  topSavings: {
+    item: string;
+    savings: string;
+    risk: 'High' | 'Medium' | 'Low';
+  }[];
+  resourceTable: {
+    resource: string;
+    usage: string;
+    inefficiency: string;
+  }[];
+  implementationRisk: string;
+  summary: string;
+}
+
+export interface SecurityReport {
+  module: 'security';
+  vulnerabilities: {
+    id: string;
+    severity: 'Critical' | 'High' | 'Medium' | 'Low';
+    file: string;
+    evidence: string;
+    remediation: string;
+  }[];
+  secretsFound: string[];
+  hardeningChecklist: string[];
+  summary: string;
+}
+
+// Union type for the main app
+export type AnalysisReport = {
   projectName: string;
   totalFilesScanned: number;
   timestamp: string;
-  highRiskHotspots: Hotspot[];
-  bottlenecks: Bottleneck[];
-  antiPatterns: string[];
-  architecturalObservations: string[];
-  optimizedCodeExample: string;
-  summary: string;
-}
+} & (ArchitectureReport | ImpactReport | CostReport | SecurityReport);
 
 export enum AppState {
   IDLE = 'IDLE',
