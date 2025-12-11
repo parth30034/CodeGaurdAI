@@ -1,3 +1,6 @@
+
+export type Category = 'Frontend' | 'Backend' | 'Mixed' | 'Infrastructure' | 'General';
+
 export interface FileContent {
   path: string;
   content: string;
@@ -8,6 +11,7 @@ export interface Hotspot {
   file: string;
   issue: string;
   impact: string;
+  category: Category;
 }
 
 export interface Bottleneck {
@@ -15,6 +19,7 @@ export interface Bottleneck {
   pattern: string;
   reason: string;
   suggestion: string;
+  category: Category;
 }
 
 export interface AnalysisReport {

@@ -1,10 +1,10 @@
+
 import React, { useState } from 'react';
 import Header from './components/Header';
 import UploadZone from './components/UploadZone';
 import AnalysisDashboard from './components/AnalysisDashboard';
 import { analyzeCodebase } from './services/geminiService';
 import { AppState, AnalysisReport, FileContent } from './types';
-import { Loader2 } from 'lucide-react';
 
 const App: React.FC = () => {
   const [state, setState] = useState<AppState>(AppState.IDLE);

@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { FileContent, AnalysisReport } from '../types';
 import { MAX_TOTAL_CONTEXT_CHARS } from '../constants';
@@ -34,8 +35,6 @@ export const analyzeCodebase = async (files: FileContent[], projectName: string,
   // ===================================================================
   const systemInstruction = composeSystemInstruction(projectProfile);
   
-  console.log(`✨ Composed ${systemInstruction.length} char system instruction with ${projectProfile.detectedModules.length} modules`);
-
   // ===================================================================
   // PHASE 3: Context Preparation with Smart Truncation
   // ===================================================================
@@ -81,53 +80,105 @@ export const analyzeCodebase = async (files: FileContent[], projectName: string,
   const schema: Schema = buildEnhancedSchema(projectProfile);
 
   // ===================================================================
-  // PHASE 6: Execute Analysis with Gemini
+  // PHASE 6: Execute Analysis with Gemini (with Quality Validation)
   // ===================================================================
   console.log('🤖 Sending to Gemini 2.5 Flash for analysis...');
   
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [
-        { text: contextParts.join('') },
-        { text: prompt }
-      ],
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: schema,
-        temperature: 0.2, // Low temperature for analytical precision
+  const maxRetries = 2;
+  let lastError: Error | null = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      // Add quality requirements to prompt on retry
+      const finalPrompt = attempt > 1 
+        ? enhancePromptForQuality(prompt, attempt)
+        : prompt;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: [
+          { text: contextParts.join('') },
+          { text: finalPrompt }
+        ],
+        config: {
+          systemInstruction,
+          responseMimeType: "application/json",
+          responseSchema: schema,
+          temperature: attempt > 1 ? 0.1 : 0.2, // Lower temp on retry for precision
+        }
+      });
+
+      const jsonText = response.text;
+      if (!jsonText) throw new Error("Empty response from AI");
+
+      const result = JSON.parse(jsonText);
+      
+      const rawReport: AnalysisReport = {
+        projectName,
+        totalFilesScanned: files.length,
+        timestamp: new Date().toISOString(),
+        ...result
+      };
+
+      // Basic validation for categorization
+      if (rawReport.highRiskHotspots.length > 0 && !rawReport.highRiskHotspots[0].category) {
+        // Fallback if AI forgot category despite schema
+        rawReport.highRiskHotspots.forEach(h => h.category = 'General');
+        rawReport.bottlenecks.forEach(b => b.category = 'General');
       }
-    });
 
-    const jsonText = response.text;
-    if (!jsonText) throw new Error("Empty response from AI");
-
-    const result = JSON.parse(jsonText);
-
-    console.log('✅ Analysis complete!');
-    console.log(`Found: ${result.highRiskHotspots?.length || 0} hotspots, ${result.bottlenecks?.length || 0} bottlenecks`);
-
-    return {
-      projectName,
-      totalFilesScanned: files.length,
-      timestamp: new Date().toISOString(),
-      ...result
-    };
-  } catch (error) {
-    console.error("❌ Gemini Analysis Failed:", error);
-    throw error;
+      return rawReport;
+      
+    } catch (error) {
+      console.error(`❌ Analysis attempt ${attempt} failed:`, error);
+      lastError = error as Error;
+      
+      if (attempt < maxRetries) {
+        console.log(`🔄 Retrying (attempt ${attempt + 1}/${maxRetries})...`);
+        await new Promise(resolve => setTimeout(resolve, 1000)); // 1s delay
+      }
+    }
   }
+  
+  // All retries failed
+  console.error("❌ Gemini Analysis Failed after all retries");
+  throw lastError || new Error("Analysis failed");
 };
 
 /**
+ * Enhance prompt with quality requirements on retry
+ */
+function enhancePromptForQuality(originalPrompt: string, attempt: number): string {
+  const qualityReminders = `
+
+## ⚠️  QUALITY REQUIREMENTS (Retry Attempt ${attempt})
+
+**CRITICAL - Your previous response had quality issues. Follow these STRICTLY:**
+
+1. **CATEGORIZATION IS MANDATORY:**
+   - You MUST categorize every finding as "Frontend", "Backend", "Mixed", or "Infrastructure".
+   - Do not use "General" unless absolutely necessary.
+
+2. **QUANTIFICATION IS MANDATORY:**
+   - Every hotspot impact MUST include numbers: "2.5s", "$2,040/year", "47 re-renders", "55x faster"
+   - Every bottleneck reason MUST include complexity: "O(n²)", "1+N queries", "500ms per request"
+
+3. **SPECIFICITY IS REQUIRED:**
+   - Locations MUST be exact: "routes/users.ts:45"
+   - Pattern names MUST be technical: "N+1 Query Problem"
+
+**Now retry the analysis with these quality standards.**
+`;
+
+  return originalPrompt + qualityReminders;
+}
+
+/**
  * Prioritize files for analysis based on project type
- * Ensures most important files are analyzed first within token limits
  */
 function prioritizeFiles(files: FileContent[], profile: ProjectProfile): FileContent[] {
   const prioritized = [...files];
 
-  // Define priority patterns based on detected modules
   const highPriorityPatterns: RegExp[] = [];
   
   if (profile.detectedModules.some(m => m.id === 'backend_api')) {
@@ -146,15 +197,12 @@ function prioritizeFiles(files: FileContent[], profile: ProjectProfile): FileCon
     highPriorityPatterns.push(/store|state|context|redux|zustand/i);
   }
 
-  // Sort files: high priority first, then by size (smaller first for more coverage)
   prioritized.sort((a, b) => {
     const aHighPriority = highPriorityPatterns.some(p => p.test(a.path));
     const bHighPriority = highPriorityPatterns.some(p => p.test(b.path));
     
     if (aHighPriority && !bHighPriority) return -1;
     if (!aHighPriority && bHighPriority) return 1;
-    
-    // Both same priority, prefer smaller files for better coverage
     return a.size - b.size;
   });
 
@@ -171,6 +219,7 @@ function buildAnalysisPrompt(profile: ProjectProfile, customInstructions?: strin
   
   if (customInstructions) {
     parts.push(`## USER-SPECIFIC INSTRUCTIONS (HIGHEST PRIORITY)\n`);
+    parts.push(`The user has provided the following context/instructions. Ensure your analysis addresses these points explicitly:\n`);
     parts.push(`"${customInstructions}"\n\n`);
     parts.push(`⚠️ Address these user instructions FIRST and ensure they appear in your findings.\n\n`);
   }
@@ -184,21 +233,6 @@ function buildAnalysisPrompt(profile: ProjectProfile, customInstructions?: strin
 
   parts.push(`\n## ANALYSIS DEPTH: ${profile.estimatedAnalysisDepth.toUpperCase()}\n`);
   
-  if (profile.estimatedAnalysisDepth === 'deep') {
-    parts.push(`- This is a ${profile.complexity} ${profile.architecture} project with ${profile.totalFiles} files\n`);
-    parts.push(`- Perform THOROUGH analysis with detailed reasoning\n`);
-    parts.push(`- Include architectural observations about system design\n`);
-    parts.push(`- Provide specific quantified metrics for all issues\n`);
-  } else if (profile.estimatedAnalysisDepth === 'standard') {
-    parts.push(`- Focus on high and critical severity issues\n`);
-    parts.push(`- Provide concrete examples for top 3-5 issues\n`);
-    parts.push(`- Include key architectural observations\n`);
-  } else {
-    parts.push(`- Prioritize CRITICAL issues only\n`);
-    parts.push(`- Keep findings concise and actionable\n`);
-    parts.push(`- Focus on quick wins\n`);
-  }
-
   parts.push(`\n## REQUIRED OUTPUT\n`);
   parts.push(`1. High-Risk Hotspots (security, complexity, fragility)\n`);
   parts.push(`2. Performance Bottlenecks (with quantified impact)\n`);
@@ -206,13 +240,14 @@ function buildAnalysisPrompt(profile: ProjectProfile, customInstructions?: strin
   parts.push(`4. Architectural Observations (system design)\n`);
   parts.push(`5. Optimized Code Example (for most critical issue)\n`);
   parts.push(`6. Executive Summary (2-3 sentences)\n`);
+  parts.push(`\n**IMPORTANT: Categorize each finding as "Frontend", "Backend", "Mixed", or "Infrastructure".**\n`);
   parts.push(`\n**Return STRICT JSON only, no additional commentary.**\n`);
 
   return parts.join('');
 }
 
 /**
- * Build enhanced JSON schema with quantifiable metrics
+ * Build enhanced JSON schema with quantifiable metrics and categorization
  */
 function buildEnhancedSchema(profile: ProjectProfile): Schema {
   return {
@@ -223,66 +258,49 @@ function buildEnhancedSchema(profile: ProjectProfile): Schema {
         items: {
           type: Type.OBJECT,
           properties: {
-            file: { 
-              type: Type.STRING,
-              description: "Exact file path"
-            },
-            issue: { 
-              type: Type.STRING,
-              description: "Concise issue description"
-            },
-            impact: { 
-              type: Type.STRING,
-              description: "Quantified business/technical impact"
+            file: { type: Type.STRING },
+            issue: { type: Type.STRING },
+            impact: { type: Type.STRING },
+            category: { 
+              type: Type.STRING, 
+              enum: ["Frontend", "Backend", "Mixed", "Infrastructure", "General"],
+              description: "The architectural layer this issue belongs to."
             },
           },
-          required: ["file", "issue", "impact"],
+          required: ["file", "issue", "impact", "category"],
         },
-        description: "Critical security, complexity, or reliability issues"
       },
       bottlenecks: {
         type: Type.ARRAY,
         items: {
           type: Type.OBJECT,
           properties: {
-            location: { 
-              type: Type.STRING,
-              description: "File:line or function name"
-            },
-            pattern: { 
-              type: Type.STRING,
-              description: "Performance anti-pattern identified"
-            },
-            reason: { 
-              type: Type.STRING,
-              description: "Why this is slow (O notation, I/O, etc)"
-            },
-            suggestion: { 
-              type: Type.STRING,
-              description: "Specific optimization with expected improvement"
+            location: { type: Type.STRING },
+            pattern: { type: Type.STRING },
+            reason: { type: Type.STRING },
+            suggestion: { type: Type.STRING },
+            category: { 
+              type: Type.STRING, 
+              enum: ["Frontend", "Backend", "Mixed", "Infrastructure", "General"],
+              description: "The architectural layer this issue belongs to."
             },
           },
-          required: ["location", "pattern", "reason", "suggestion"],
+          required: ["location", "pattern", "reason", "suggestion", "category"],
         },
-        description: "Performance issues with quantified impact"
       },
       antiPatterns: {
         type: Type.ARRAY,
         items: { type: Type.STRING },
-        description: "Code quality issues and architectural smells"
       },
       architecturalObservations: {
         type: Type.ARRAY,
         items: { type: Type.STRING },
-        description: "System design insights and recommendations"
       },
       optimizedCodeExample: {
         type: Type.STRING,
-        description: "Working code fix for the most critical issue with comments explaining the optimization"
       },
       summary: {
         type: Type.STRING,
-        description: "Executive summary: what's the biggest problem and impact?"
       }
     },
     required: ["highRiskHotspots", "bottlenecks", "antiPatterns", "architecturalObservations", "optimizedCodeExample", "summary"],

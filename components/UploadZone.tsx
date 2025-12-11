@@ -1,5 +1,6 @@
+
 import React, { useCallback, useState } from 'react';
-import { UploadCloud, FolderOpen, FileArchive, Loader2, MessageSquare, X, Play, FileCode } from 'lucide-react';
+import { UploadCloud, FolderOpen, FileArchive, Loader2, MessageSquare, X, Play, FileCode, CheckCircle2 } from 'lucide-react';
 import { processZipFile, processFileList } from '../utils/fileHelpers';
 import { FileContent } from '../types';
 
@@ -34,7 +35,6 @@ const UploadZone: React.FC<UploadZoneProps> = ({ onFilesProcessed, isProcessing 
       if (droppedFiles.length === 1 && droppedFiles[0].name.endsWith('.zip')) {
          setPendingFile(droppedFiles[0]);
       } else {
-         // Assuming folder drop or multiple files, treat as file list
          setPendingFile(droppedFiles);
       }
     }
@@ -163,72 +163,98 @@ const UploadZone: React.FC<UploadZoneProps> = ({ onFilesProcessed, isProcessing 
     );
   }
 
-  // Render the Review & Instructions View
+  // Render the Review & Instructions View (Chat Interface)
   return (
     <div className="w-full max-w-2xl mx-auto mt-12 mb-12 animate-fade-in">
-       <div className="bg-surface border border-surfaceHighlight rounded-2xl overflow-hidden shadow-2xl">
+       <div className="bg-surface border border-surfaceHighlight rounded-2xl overflow-hidden shadow-2xl relative">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary via-secondary to-accent"></div>
+          
           {/* Header */}
-          <div className="p-6 border-b border-surfaceHighlight flex items-center justify-between bg-surfaceHighlight/20">
-             <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center">
-                    <FileCode className="w-5 h-5 text-primary" />
+          <div className="p-6 border-b border-surfaceHighlight flex items-center justify-between bg-surfaceHighlight/10">
+             <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-xl bg-surfaceHighlight flex items-center justify-center border border-surfaceHighlight/50">
+                    <CheckCircle2 className="w-6 h-6 text-accent" />
                 </div>
                 <div>
-                   <h3 className="text-white font-bold">{getProjectName()}</h3>
-                   <p className="text-xs text-muted font-mono">
-                     {pendingFile instanceof File ? 'ZIP Archive' : `${pendingFile.length} Files detected`}
-                   </p>
+                   <h3 className="text-white font-bold text-lg">{getProjectName()}</h3>
+                   <div className="flex items-center gap-2 text-sm text-muted">
+                      <span className="bg-primary/10 text-primary px-2 py-0.5 rounded text-xs font-mono">READY</span>
+                      <span>•</span>
+                      <span>{pendingFile instanceof File ? 'ZIP Archive' : `${pendingFile.length} Files detected`}</span>
+                   </div>
                 </div>
              </div>
              <button 
                onClick={clearSelection} 
-               className="p-2 hover:bg-white/10 rounded-full text-muted hover:text-white transition-colors"
+               className="p-2 hover:bg-white/5 rounded-full text-muted hover:text-white transition-colors"
                disabled={isParsing || isProcessing}
+               title="Cancel Upload"
              >
                 <X className="w-5 h-5" />
              </button>
           </div>
 
           {/* Body */}
-          <div className="p-6 space-y-4">
-             <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-300 flex items-center gap-2">
-                   <MessageSquare className="w-4 h-4 text-accent" />
-                   Analysis Instructions <span className="text-muted font-normal">(Optional)</span>
-                </label>
-                <textarea 
-                   className="w-full h-32 bg-background border border-surfaceHighlight rounded-xl p-4 text-sm text-white placeholder:text-muted/50 focus:outline-none focus:border-primary/50 transition-colors resize-none font-mono"
-                   placeholder="e.g., Check for SQL injection vulnerabilities in the user controller, or optimize the image processing loop..."
-                   value={instructions}
-                   onChange={(e) => setInstructions(e.target.value)}
-                   disabled={isParsing || isProcessing}
-                />
+          <div className="p-6 space-y-6">
+             <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium text-white flex items-center gap-2">
+                    <MessageSquare className="w-4 h-4 text-primary" />
+                    Instructions for AI <span className="text-muted font-normal">(Optional)</span>
+                  </label>
+                  <span className="text-xs text-muted">Give context for better results</span>
+                </div>
+                
+                <div className="relative">
+                  <textarea 
+                    className="w-full h-40 bg-background border border-surfaceHighlight rounded-xl p-4 text-sm text-gray-200 placeholder:text-gray-600 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-all resize-none font-mono leading-relaxed"
+                    placeholder="e.g. Focus on the checkout flow, ignore the legacy reporting module, and check for any React memory leaks in the dashboard components..."
+                    value={instructions}
+                    onChange={(e) => setInstructions(e.target.value)}
+                    disabled={isParsing || isProcessing}
+                  />
+                  <div className="absolute bottom-3 right-3 text-[10px] text-muted font-mono">
+                    {instructions.length} chars
+                  </div>
+                </div>
+             </div>
+
+             <div className="bg-blue-900/10 border border-blue-500/10 rounded-lg p-4 flex gap-3">
+                <div className="w-5 h-5 rounded-full bg-blue-500/20 flex items-center justify-center shrink-0 mt-0.5">
+                   <span className="text-blue-400 text-xs font-bold">i</span>
+                </div>
+                <div className="space-y-1">
+                   <p className="text-xs text-blue-200 font-medium">Why add instructions?</p>
+                   <p className="text-xs text-blue-300/70 leading-relaxed">
+                      CodeGuard AI adapts its scan based on your needs. Telling it to "focus on security" or "audit the API layer" assigns more token budget to those areas.
+                   </p>
+                </div>
              </div>
           </div>
 
           {/* Footer */}
-          <div className="p-6 bg-surfaceHighlight/10 border-t border-surfaceHighlight flex justify-end gap-3">
+          <div className="p-6 bg-surfaceHighlight/5 border-t border-surfaceHighlight flex justify-between items-center">
              <button 
                 onClick={clearSelection}
                 className="px-4 py-2 text-sm font-medium text-muted hover:text-white transition-colors"
                 disabled={isParsing || isProcessing}
              >
-                Cancel
+                Back to Upload
              </button>
              <button 
                 onClick={handleStartAnalysis}
                 disabled={isParsing || isProcessing}
-                className="flex items-center gap-2 px-6 py-2 bg-primary hover:bg-primary/90 text-background font-bold rounded-lg transition-all hover:scale-105 active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                className="group relative flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-primary to-secondary text-white font-bold rounded-xl transition-all hover:shadow-[0_0_20px_rgba(0,229,255,0.3)] hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none disabled:shadow-none"
              >
                 {isParsing ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Processing Files...
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>Analyzing Codebase...</span>
                   </>
                 ) : (
                   <>
-                    <Play className="w-4 h-4 fill-current" />
-                    Start Analysis
+                    <Play className="w-5 h-5 fill-current" />
+                    <span>Start Analysis</span>
                   </>
                 )}
              </button>
