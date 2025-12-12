@@ -1,5 +1,5 @@
 {
   "name": "CodeGuard AI",
-  "description": "An advanced automated code audit tool that scans project archives or folders for performance bottlenecks, security hotspots, and architectural flaws using Gemini 2.5.",
+  "description": "An advanced automated code audit tool that scans project archives or folders for performance bottlenecks, security hotspots, and architectural flaws using Gemini 3 Pro.",
   "requestFramePermissions": []
 }

@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { FileContent, AnalysisReport, ModuleType } from '../types';
 import { MAX_TOTAL_CONTEXT_CHARS } from '../constants';
@@ -57,7 +56,7 @@ export const analyzeCodebase = async (
   
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3-pro-preview",
       contents: [
         { text: contextParts.join('') }
       ],

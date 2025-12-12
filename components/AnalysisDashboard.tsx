@@ -17,7 +17,7 @@ const ArchitectureView: React.FC<{ report: ArchitectureReport }> = ({ report }) 
       {Object.entries(report.dimensionScores).map(([key, score]) => (
         <div key={key} className="bg-surface border border-surfaceHighlight p-4 rounded-xl text-center">
           <div className="text-xs text-muted uppercase tracking-wider mb-1">{key}</div>
-          <div className={`text-2xl font-bold ${score > 80 ? 'text-accent' : score > 50 ? 'text-yellow-400' : 'text-danger'}`}>{score}</div>
+          <div className={`text-2xl font-bold ${(score as number) > 80 ? 'text-accent' : (score as number) > 50 ? 'text-yellow-400' : 'text-danger'}`}>{score as number}</div>
         </div>
       ))}
     </div>
